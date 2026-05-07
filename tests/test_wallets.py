@@ -36,7 +36,6 @@ def manage_db():
         shell=True, capture_output=True
     )
 
-    # Создаем движок и таблицы
     create_engine_and_session()
     app.dependency_overrides[get_db] = fake_db
 
@@ -48,7 +47,6 @@ def manage_db():
 
     yield
 
-    # Удаляем таблицы и БД
     async def _drop():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
@@ -84,27 +82,27 @@ async def wallet():
     return wid
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_balance_ok(client, wallet):
     r = await client.get(f"/api/v1/wallets/{wallet}")
     assert r.status_code == 200
     assert r.json()["balance"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_balance_404(client):
     r = await client.get(f"/api/v1/wallets/{uuid.uuid4()}")
     assert r.status_code == 404
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deposit_ok(client, wallet):
     r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
     assert r.status_code == 200
     assert r.json()["balance"] == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_withdraw_ok(client, wallet):
     await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
     r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 40})
@@ -112,19 +110,19 @@ async def test_withdraw_ok(client, wallet):
     assert r.json()["balance"] == 60
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_withdraw_insufficient(client, wallet):
     r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 10})
     assert r.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deposit_negative(client, wallet):
     r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": -5})
     assert r.status_code == 422
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_concurrent(client, wallet):
     await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
     tasks = [client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 10}) for _
