@@ -1,3 +1,5 @@
+pytest-asyncio
+sqlalchemy-utils
 fastapi
 uvicorn[standard]
 sqlalchemy
