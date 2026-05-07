@@ -1,9 +1,9 @@
+import asyncio
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from decimal import Decimal
 import uuid
-import asyncio
 import subprocess
 
 from app.main import app
@@ -13,122 +13,115 @@ from app.models import Wallet
 TEST_DB = "test_wallets_db"
 TEST_URL = f"postgresql+asyncpg://postgres:postgres@localhost:5432/{TEST_DB}"
 
-engine = None
-TestSession = None
 
-
-def create_engine_and_session():
-    global engine, TestSession
-    engine = create_async_engine(TEST_URL)
-    TestSession = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
-async def fake_db():
-    async with TestSession() as session:
-        yield session
-
-
-@pytest.fixture(scope="session", autouse=True)
-def manage_db():
-    result = subprocess.run(
+def create_db():
+    subprocess.run(
         f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "CREATE DATABASE {TEST_DB}"',
-        shell=True, capture_output=True, text=True
+        shell=True, capture_output=True
     )
-    if result.returncode != 0 and "already exists" not in result.stderr:
-        raise RuntimeError(f"Failed to create test DB: {result.stderr}")
 
-    create_engine_and_session()
-    app.dependency_overrides[get_db] = fake_db
 
-    async def _create():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create())
-
-    yield
-
-    async def _drop():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-        await engine.dispose()
-
-    asyncio.run(_drop())
-
+def drop_db():
     subprocess.run(
         f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS {TEST_DB}"',
-        shell=True, capture_output=True, text=True
+        shell=True, capture_output=True
     )
 
 
-@pytest.fixture(autouse=True)
-async def clean_db():
+async def setup_engine():
+    engine = create_async_engine(TEST_URL)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    return engine
+
+
+async def teardown_engine(engine):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
 
 
-@pytest.fixture
-async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
+class TestWalletAPI:
 
+    @pytest.fixture(scope="class")
+    def event_loop(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        yield loop
+        loop.close()
 
-@pytest.fixture
-async def wallet():
-    wid = uuid.uuid4()
-    async with TestSession() as session:
-        session.add(Wallet(id=wid, balance=0))
-        await session.commit()
-    return wid
+    @pytest.fixture(autouse=True)
+    async def _setup(self):
+        create_db()
+        self.engine = await setup_engine()
+        self.session_factory = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
 
+        async def fake_db():
+            async with self.session_factory() as session:
+                yield session
 
-@pytest.mark.anyio
-async def test_get_balance_ok(client, wallet):
-    r = await client.get(f"/api/v1/wallets/{wallet}")
-    assert r.status_code == 200
-    assert r.json()["balance"] == 0
+        app.dependency_overrides[get_db] = fake_db
+        self.client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
+        yield
 
-@pytest.mark.anyio
-async def test_get_balance_404(client):
-    r = await client.get(f"/api/v1/wallets/{uuid.uuid4()}")
-    assert r.status_code == 404
+        await self.client.aclose()
+        await teardown_engine(self.engine)
+        drop_db()
 
+    @pytest.fixture
+    async def wallet(self):
+        wid = uuid.uuid4()
+        async with self.session_factory() as session:
+            session.add(Wallet(id=wid, balance=0))
+            await session.commit()
+        return wid
 
-@pytest.mark.anyio
-async def test_deposit_ok(client, wallet):
-    r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
-    assert r.status_code == 200
-    assert r.json()["balance"] == 100
+    @pytest.mark.asyncio
+    async def test_get_balance_ok(self, wallet):
+        r = await self.client.get(f"/api/v1/wallets/{wallet}")
+        assert r.status_code == 200
+        assert Decimal(r.json()["balance"]) == 0
 
+    @pytest.mark.asyncio
+    async def test_get_balance_404(self):
+        r = await self.client.get(f"/api/v1/wallets/{uuid.uuid4()}")
+        assert r.status_code == 404
 
-@pytest.mark.anyio
-async def test_withdraw_ok(client, wallet):
-    await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
-    r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 40})
-    assert r.status_code == 200
-    assert r.json()["balance"] == 60
+    @pytest.mark.asyncio
+    async def test_deposit_ok(self, wallet):
+        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
+                                   json={"operation_type": "DEPOSIT", "amount": 100})
+        assert r.status_code == 200
+        assert Decimal(r.json()["balance"]) == 100
 
+    @pytest.mark.asyncio
+    async def test_withdraw_ok(self, wallet):
+        await self.client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
+        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
+                                   json={"operation_type": "WITHDRAW", "amount": 40})
+        assert r.status_code == 200
+        assert Decimal(r.json()["balance"]) == 60
 
-@pytest.mark.anyio
-async def test_withdraw_insufficient(client, wallet):
-    r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 10})
-    assert r.status_code == 400
+    @pytest.mark.asyncio
+    async def test_withdraw_insufficient(self, wallet):
+        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
+                                   json={"operation_type": "WITHDRAW", "amount": 10})
+        assert r.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_deposit_negative(self, wallet):
+        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
+                                   json={"operation_type": "DEPOSIT", "amount": -5})
+        assert r.status_code == 422
 
-@pytest.mark.anyio
-async def test_deposit_negative(client, wallet):
-    r = await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": -5})
-    assert r.status_code == 422
-
-
-@pytest.mark.anyio
-async def test_concurrent(client, wallet):
-    await client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
-    tasks = [client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 10}) for _
-             in range(10)]
-    responses = await asyncio.gather(*tasks)
-    assert all(r.status_code == 200 for r in responses)
-    r = await client.get(f"/api/v1/wallets/{wallet}")
-    assert r.json()["balance"] == 0
+    @pytest.mark.asyncio
+    async def test_concurrent(self, wallet):
+        await self.client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
+        tasks = [
+            self.client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 10})
+            for _ in range(10)]
+        responses = await asyncio.gather(*tasks)
+        assert all(r.status_code == 200 for r in responses)
+        r = await self.client.get(f"/api/v1/wallets/{wallet}")
+        assert Decimal(r.json()["balance"]) == 0
