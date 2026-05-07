@@ -6,13 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, schemas
 from .database import engine, get_db
-from .models import Base
+from .models import Wallet
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     yield
     await engine.dispose()
 

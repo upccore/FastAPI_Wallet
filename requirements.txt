@@ -5,3 +5,4 @@ asyncpg
 pydantic
 pytest
 httpx
+alembic
