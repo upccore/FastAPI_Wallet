@@ -27,7 +27,7 @@ async def create_test_database():
             password=TEST_PASSWORD,
             host=TEST_HOST,
             port=TEST_PORT,
-            database="postgres"
+            database="postgres",
         )
         await conn.execute(f"CREATE DATABASE {TEST_DB}")
         await conn.close()
@@ -52,7 +52,9 @@ async def engine():
 
 @pytest_asyncio.fixture
 async def session(engine):
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
     async with session_factory() as session:
         yield session
 
@@ -79,7 +81,7 @@ async def wallet(session):
 @pytest_asyncio.fixture
 async def client():
     async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client
 

@@ -3,15 +3,15 @@ import os
 import sys
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from app.database import Base
 from app.config import DATABASE_URL
-
+from app.database import Base
 from app.models import Wallet
 
 config = context.config
