@@ -1,12 +1,13 @@
 import asyncio
-import pytest
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from decimal import Decimal
 import uuid
+from decimal import Decimal
 
-from app.main import app
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from app.database import Base, get_db
+from app.main import app
 from app.models import Wallet
 
 TEST_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/wallets_db"
@@ -24,7 +25,9 @@ class TestWalletAPI:
     @pytest.fixture(autouse=True)
     async def _setup(self):
         self.engine = create_async_engine(TEST_URL)
-        self.session_factory = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+        self.session_factory = async_sessionmaker(
+            self.engine, class_=AsyncSession, expire_on_commit=False
+        )
 
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -34,7 +37,9 @@ class TestWalletAPI:
                 yield session
 
         app.dependency_overrides[get_db] = fake_db
-        self.client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+        self.client = AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        )
 
         yield
 
@@ -64,37 +69,55 @@ class TestWalletAPI:
 
     @pytest.mark.asyncio
     async def test_deposit_ok(self, wallet):
-        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
-                                   json={"operation_type": "DEPOSIT", "amount": 100})
+        r = await self.client.post(
+            f"/api/v1/wallets/{wallet}/operation",
+            json={"operation_type": "DEPOSIT", "amount": 100},
+        )
         assert r.status_code == 200
         assert Decimal(r.json()["balance"]) == 100
 
     @pytest.mark.asyncio
     async def test_withdraw_ok(self, wallet):
-        await self.client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
-        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
-                                   json={"operation_type": "WITHDRAW", "amount": 40})
+        await self.client.post(
+            f"/api/v1/wallets/{wallet}/operation",
+            json={"operation_type": "DEPOSIT", "amount": 100},
+        )
+        r = await self.client.post(
+            f"/api/v1/wallets/{wallet}/operation",
+            json={"operation_type": "WITHDRAW", "amount": 40},
+        )
         assert r.status_code == 200
         assert Decimal(r.json()["balance"]) == 60
 
     @pytest.mark.asyncio
     async def test_withdraw_insufficient(self, wallet):
-        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
-                                   json={"operation_type": "WITHDRAW", "amount": 10})
+        r = await self.client.post(
+            f"/api/v1/wallets/{wallet}/operation",
+            json={"operation_type": "WITHDRAW", "amount": 10},
+        )
         assert r.status_code == 400
 
     @pytest.mark.asyncio
     async def test_deposit_negative(self, wallet):
-        r = await self.client.post(f"/api/v1/wallets/{wallet}/operation",
-                                   json={"operation_type": "DEPOSIT", "amount": -5})
+        r = await self.client.post(
+            f"/api/v1/wallets/{wallet}/operation",
+            json={"operation_type": "DEPOSIT", "amount": -5},
+        )
         assert r.status_code == 422
 
     @pytest.mark.asyncio
     async def test_concurrent(self, wallet):
-        await self.client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "DEPOSIT", "amount": 100})
+        await self.client.post(
+            f"/api/v1/wallets/{wallet}/operation",
+            json={"operation_type": "DEPOSIT", "amount": 100},
+        )
         tasks = [
-            self.client.post(f"/api/v1/wallets/{wallet}/operation", json={"operation_type": "WITHDRAW", "amount": 10})
-            for _ in range(10)]
+            self.client.post(
+                f"/api/v1/wallets/{wallet}/operation",
+                json={"operation_type": "WITHDRAW", "amount": 10},
+            )
+            for _ in range(10)
+        ]
         responses = await asyncio.gather(*tasks)
         assert all(r.status_code == 200 for r in responses)
         r = await self.client.get(f"/api/v1/wallets/{wallet}")

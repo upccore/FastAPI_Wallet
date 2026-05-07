@@ -1,10 +1,11 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, schemas
-from .database import get_db, engine
+from .database import engine, get_db
 from .models import Base
 
 
@@ -19,11 +20,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Wallet Service", lifespan=lifespan)
 
 
-@app.post("/api/v1/wallets/{WALLET_UUID}/operation", response_model=schemas.WalletResponse)
+@app.post(
+    "/api/v1/wallets/{WALLET_UUID}/operation", response_model=schemas.WalletResponse
+)
 async def wallet_operation(
-        WALLET_UUID: uuid.UUID,
-        operation: schemas.OperationRequest,
-        db: AsyncSession = Depends(get_db)
+    WALLET_UUID: uuid.UUID,
+    operation: schemas.OperationRequest,
+    db: AsyncSession = Depends(get_db),
 ):
     result = await crud.process_operation(db, WALLET_UUID, operation)
     if result is None:
@@ -34,10 +37,7 @@ async def wallet_operation(
 
 
 @app.get("/api/v1/wallets/{WALLET_UUID}", response_model=schemas.WalletResponse)
-async def get_balance(
-        WALLET_UUID: uuid.UUID,
-        db: AsyncSession = Depends(get_db)
-):
+async def get_balance(WALLET_UUID: uuid.UUID, db: AsyncSession = Depends(get_db)):
     wallet = await crud.get_wallet(db, WALLET_UUID)
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")

@@ -1,6 +1,8 @@
 import uuid
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from .models import Wallet
 from .schemas import OperationRequest
 
@@ -10,7 +12,9 @@ async def get_wallet(db: AsyncSession, wallet_id: uuid.UUID):
     return result.scalar_one_or_none()
 
 
-async def process_operation(db: AsyncSession, wallet_id: uuid.UUID, operation: OperationRequest):
+async def process_operation(
+    db: AsyncSession, wallet_id: uuid.UUID, operation: OperationRequest
+):
     async with db.begin():
         result = await db.execute(
             select(Wallet).where(Wallet.id == wallet_id).with_for_update()
