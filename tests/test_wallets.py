@@ -4,41 +4,12 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from decimal import Decimal
 import uuid
-import subprocess
 
 from app.main import app
 from app.database import Base, get_db
 from app.models import Wallet
 
-TEST_DB = "test_wallets_db"
-TEST_URL = f"postgresql+asyncpg://postgres:postgres@localhost:5432/{TEST_DB}"
-
-
-def create_db():
-    subprocess.run(
-        f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "CREATE DATABASE {TEST_DB}"',
-        shell=True, capture_output=True
-    )
-
-
-def drop_db():
-    subprocess.run(
-        f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS {TEST_DB}"',
-        shell=True, capture_output=True
-    )
-
-
-async def setup_engine():
-    engine = create_async_engine(TEST_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return engine
-
-
-async def teardown_engine(engine):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+TEST_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/wallets_db"
 
 
 class TestWalletAPI:
@@ -52,9 +23,11 @@ class TestWalletAPI:
 
     @pytest.fixture(autouse=True)
     async def _setup(self):
-        create_db()
-        self.engine = await setup_engine()
+        self.engine = create_async_engine(TEST_URL)
         self.session_factory = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
         async def fake_db():
             async with self.session_factory() as session:
@@ -66,8 +39,9 @@ class TestWalletAPI:
         yield
 
         await self.client.aclose()
-        await teardown_engine(self.engine)
-        drop_db()
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await self.engine.dispose()
 
     @pytest.fixture
     async def wallet(self):
