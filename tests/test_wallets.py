@@ -30,11 +30,12 @@ async def fake_db():
 
 @pytest.fixture(scope="session", autouse=True)
 def manage_db():
-    # Создаем БД
-    subprocess.run(
+    result = subprocess.run(
         f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "CREATE DATABASE {TEST_DB}"',
-        shell=True, capture_output=True
+        shell=True, capture_output=True, text=True
     )
+    if result.returncode != 0 and "already exists" not in result.stderr:
+        raise RuntimeError(f"Failed to create test DB: {result.stderr}")
 
     create_engine_and_session()
     app.dependency_overrides[get_db] = fake_db
@@ -56,7 +57,7 @@ def manage_db():
 
     subprocess.run(
         f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS {TEST_DB}"',
-        shell=True, capture_output=True
+        shell=True, capture_output=True, text=True
     )
 
 
