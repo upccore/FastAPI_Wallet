@@ -4,17 +4,23 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 import uuid
 import asyncio
+import subprocess
 
 from app.main import app
 from app.database import Base, get_db
 from app.models import Wallet
 
-ADMIN_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
 TEST_DB = "test_wallets_db"
 TEST_URL = f"postgresql+asyncpg://postgres:postgres@localhost:5432/{TEST_DB}"
 
-engine = create_async_engine(TEST_URL)
-TestSession = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = None
+TestSession = None
+
+
+def create_engine_and_session():
+    global engine, TestSession
+    engine = create_async_engine(TEST_URL)
+    TestSession = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 async def fake_db():
@@ -22,27 +28,38 @@ async def fake_db():
         yield session
 
 
-app.dependency_overrides[get_db] = fake_db
-
-
 @pytest.fixture(scope="session", autouse=True)
 def manage_db():
-    import subprocess
-    subprocess.run(f'docker exec -i wallet_app-db-1 psql -U postgres -c "CREATE DATABASE {TEST_DB}"', shell=True)
-    asyncio.run(create_tables())
+    # Создаем БД
+    subprocess.run(
+        f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "CREATE DATABASE {TEST_DB}"',
+        shell=True, capture_output=True
+    )
+
+    # Создаем движок и таблицы
+    create_engine_and_session()
+    app.dependency_overrides[get_db] = fake_db
+
+    async def _create():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_create())
+
     yield
-    asyncio.run(drop_tables())
-    subprocess.run(f'docker exec -i wallet_app-db-1 psql -U postgres -c "DROP DATABASE {TEST_DB}"', shell=True)
 
+    # Удаляем таблицы и БД
+    async def _drop():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
 
-async def create_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    asyncio.run(_drop())
 
-
-async def drop_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    subprocess.run(
+        f'docker exec -i fastapi_wallet-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS {TEST_DB}"',
+        shell=True, capture_output=True
+    )
 
 
 @pytest.fixture(autouse=True)
