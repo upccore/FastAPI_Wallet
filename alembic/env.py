@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.config import DATABASE_URL
 from app.database import Base
-from app.models import Wallet
 
 config = context.config
 

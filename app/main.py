@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, schemas
 from .database import engine, get_db
-from .models import Wallet
 
 
 @asynccontextmanager
